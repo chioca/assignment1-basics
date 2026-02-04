@@ -1,4 +1,5 @@
 from collections import Counter, defaultdict
+import re
 
 GPT2_TOKENIZER_REGEX = (
     r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
@@ -50,6 +51,19 @@ def init_vacab(special_tokens: list[str] | None = None) -> dict[int, bytes]:
     return vocab
 
 
+def pre_tokenize(text: str, special_tokens: list[str], including_special: bool = False):
+    # 如果不使用 regex 库，可以用简单的 re 实现（示意）：
+    # \w 匹配字母数字，\W 匹配标点空格
+    pattern = re.compile(r"""\s?[a-zA-Z]+|\s?[0-9]+|\s?[^\s\w]+|\s+""")
+    words = pattern.findall(text)
+    word_counts = Counter()
+    for word in words:
+        byte_tuple = tuple(word.encode("utf-8"))
+        word_counts[byte_tuple] += 1
+
+    return dict(word_counts)
+
+
 def pair_counts(word_counter: dict[tuple[int, ...], int]) -> dict[tuple[int, int], int]:
     pairs: dict[tuple[int, int], int] = defaultdict(int)
     for ids, count in word_counter.items():
@@ -74,7 +88,7 @@ def add_pair_to_vocab(vocab: dict[int, bytes], pair: tuple[int, int]) -> int:
 
 
 def merge_pair_ids(
-    word_counter: dict[tuple[bytes] | tuple[int], int],
+    word_counter: dict[tuple[int], int],
     pair: tuple[int, int],
     new_id: int,
 ) -> tuple[dict[tuple[int], int], dict[tuple[int, int], int]]:
@@ -91,5 +105,46 @@ def merge_pair_ids(
             else:
                 new_word.append(ids[i])
                 i += 1
+        for _pair in zip(new_word, new_word[1:]):
+            new_pair_counter[_pair] += frequency
+        new_word_counter[tuple(new_word)] += frequency
 
-        new_word_counter[tuple(new_word)] += 1
+    return new_word_counter, new_pair_counter
+
+
+string = """ 
+low low low low low <|endoftext|>
+lower lower widest widest widest <|endoftext|>
+newest newest newest newest newest newest 
+"""
+special_tokens: list[str] = ["<|endoftext|>"]
+
+
+def train_bpe(
+    string: str = string,
+    vocab_size: int = 263,
+    special_tokens: list[str] = special_tokens,
+    save_path: str | None = None,
+):
+    # 初始化词汇表
+    vocab = init_vacab(special_tokens)
+    word_counter = pre_tokenize(string, special_tokens)
+    pair_freqs = pair_counts(word_counter)
+    num_train = vocab_size - len(vocab)
+    merges: list[tuple[int, int, int]] = []
+    for i in range(num_train):
+        pair = get_most_frequent_pair(pair_freqs)
+        new_id = add_pair_to_vocab(vocab, pair)
+        word_counter, pair_freqs = merge_pair_ids(word_counter, pair, new_id)
+        merges.append((pair, new_id))
+        print(f"the {i+1} epoch is {pair[0]} + {pair[1]} -> {new_id}")
+    return (vocab, word_counter, merges)
+
+
+vocab, word_counter, merges = train_bpe(
+    string=string,
+    vocab_size=256 + 1 + 6,
+    special_tokens=special_tokens,
+)
+
+print(vocab, word_counter, merges)
