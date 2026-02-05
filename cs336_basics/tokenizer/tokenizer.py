@@ -1,11 +1,12 @@
 from collections import Counter, defaultdict
-import re
+import queue
+from multiprocessing import Process, Queue, Manager
+import regex as re
+import os
+from cs336_basics.tokenizer.utils import print_color, find_chunk_boundaries, timeit
+from cs336_basics.tokenizer.merge_fn import build_pair_heap, pop_most_frequent_pair
 
-GPT2_TOKENIZER_REGEX = (
-    r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
-)
-
-
+PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
 """
 缩写撇号处理：'(?:[sdmt]|ll|ve|re)
 匹配内容：常见的英语缩写后缀，如 's, 'd, 'm, 't, 'll, 've, 're。
@@ -32,7 +33,7 @@ GPT2_TOKENIZER_REGEX = (
 """
 
 
-def init_vacab(special_tokens: list[str] | None = None) -> dict[int, bytes]:
+def init_vocab(special_tokens: list[str] | None = None) -> dict[int, bytes]:
     """初始化词汇表
 
     Args:
@@ -51,17 +52,46 @@ def init_vacab(special_tokens: list[str] | None = None) -> dict[int, bytes]:
     return vocab
 
 
-def pre_tokenize(text: str, special_tokens: list[str], including_special: bool = False):
-    # 如果不使用 regex 库，可以用简单的 re 实现（示意）：
-    # \w 匹配字母数字，\W 匹配标点空格
-    pattern = re.compile(r"""\s?[a-zA-Z]+|\s?[0-9]+|\s?[^\s\w]+|\s+""")
-    words = pattern.findall(text)
-    word_counts = Counter()
-    for word in words:
-        byte_tuple = tuple(word.encode("utf-8"))
-        word_counts[byte_tuple] += 1
+def split_by_special_tokens(
+    text: str, special_tokens: list[str], including_special: bool = False
+) -> list[str]:
+    if special_tokens is None:
+        return [text]
 
-    return dict(word_counts)
+    special_tokens_sorted = sorted(special_tokens, key=len, reverse=True)
+    pattern = "|".join(re.escape(t) for t in special_tokens_sorted)
+
+    if including_special:
+        special_chunks = re.split(f"({pattern})", text)
+    else:
+        special_chunks = re.split(pattern, text)
+
+    return special_chunks
+
+
+def pre_tokenize(
+    text: str,
+    special_tokens: list[str],
+    including_special: bool = False,
+) -> Counter:
+
+    word_counts = Counter()
+    chunks = split_by_special_tokens(text, special_tokens, including_special)
+
+    for chunk in chunks:
+        # special token：作为原子处理
+        if chunk in special_tokens:
+            if including_special:
+                word_counts[tuple(chunk.encode("utf-8"))] += 1
+            continue
+
+        # 普通文本：正则切分
+        for match in re.finditer(PAT, chunk):
+            word = match.group(0)
+            word_encoded = tuple(word.encode("utf-8"))
+            word_counts[word_encoded] += 1
+
+    return word_counts
 
 
 def pair_counts(word_counter: dict[tuple[int, ...], int]) -> dict[tuple[int, int], int]:
@@ -75,8 +105,7 @@ def pair_counts(word_counter: dict[tuple[int, ...], int]) -> dict[tuple[int, int
 
 def get_most_frequent_pair(pair_counter: dict[tuple[int, int], int]) -> tuple[int, int]:
     max_freq = max(pair_counter.values())
-    candidates = [pair for pair, freq in pair_counter.items() if freq == max_freq]
-    res = max(candidates)
+    res = max(pair_counter.items(), key=lambda x: (x[1], x[0]))[0]
 
     return res
 
@@ -112,6 +141,84 @@ def merge_pair_ids(
     return new_word_counter, new_pair_counter
 
 
+def pre_tokenize_string_worker(*args):
+    input_path, special_tokens, queue, start, end, include_special = args
+    with open(input_path, "rb") as f:
+        f.seek(start)
+        chunk = f.read(end - start).decode(encoding="utf-8", errors="ignore")
+    word_counter = pre_tokenize(chunk, special_tokens, include_special)
+    queue.put(word_counter)
+
+
+@timeit
+def train_bpe(
+    input_path: str | os.PathLike,
+    vocab_size: int,
+    special_tokens: list[str] | None = None,
+    verbose: bool = False,
+    **kwargs,
+):
+
+    with open(input_path, "rb") as f:
+        num_merges = vocab_size - 256 - (len(special_tokens) if special_tokens else 0)
+    vocab: dict[int, bytes] = init_vocab(special_tokens)
+    merges: list[tuple[bytes, bytes]] = []
+
+    # 1. Pre-tokenization
+    # 1.1 Find chunk boundaries
+    with open(input_path, "rb") as f:
+        chunk_boundaries = find_chunk_boundaries(
+            f,
+            desired_num_chunks=kwargs.get("desired_num_chunks", 5),
+            split_special_token=b"\n",
+        )
+
+    if verbose:
+        print_color(
+            f"Identified {len(chunk_boundaries) - 1} chunks for pre-tokenization."
+        )
+
+    # 1.2 Count word frequencies across chunks using multiprocessing
+    manager = Manager()
+    queue = manager.Queue()
+    processes: list[Process] = []
+    for start, end in zip(chunk_boundaries[:-1], chunk_boundaries[1:]):
+        p = Process(
+            target=pre_tokenize_string_worker,
+            args=(input_path, special_tokens, queue, start, end, False),
+        )
+        processes.append(p)
+        p.start()
+
+    word_counter = Counter()
+    for _ in range(len(processes)):
+        try:
+            partial_counter = queue.get(timeout=10)
+            word_counter.update(partial_counter)
+        except:
+            continue
+    for p in processes:
+        p.join()
+
+    pair_counter = Counter()
+    pair_to_words: dict[tuple[int, int], set[tuple[int]]] = defaultdict(set)
+    for word in word_counter:
+        for pair in zip(word, word[1:]):
+            pair_to_words[pair].add(word)
+            pair_counter[pair] += word_counter[word]
+
+    vocab = init_vocab(special_tokens)
+    pair_freqs = pair_counts(word_counter)
+    pair_heap = build_pair_heap(pair_freqs, vocab)
+    merges: list[tuple[bytes, bytes]] = []
+    for _ in range(num_merges):
+        pair = pop_most_frequent_pair(pair_heap, pair_freqs)
+        new_id = add_pair_to_vocab(vocab, pair)
+        word_counter, pair_freqs = merge_pair_ids(word_counter, pair, new_id)
+        merges.append((vocab[pair[0]], vocab[pair[1]]))
+    return (vocab, merges)
+
+
 string = """ 
 low low low low low <|endoftext|>
 lower lower widest widest widest <|endoftext|>
@@ -120,31 +227,31 @@ newest newest newest newest newest newest
 special_tokens: list[str] = ["<|endoftext|>"]
 
 
-def train_bpe(
-    string: str = string,
-    vocab_size: int = 263,
-    special_tokens: list[str] = special_tokens,
-    save_path: str | None = None,
-):
-    # 初始化词汇表
-    vocab = init_vacab(special_tokens)
-    word_counter = pre_tokenize(string, special_tokens)
-    pair_freqs = pair_counts(word_counter)
-    num_train = vocab_size - len(vocab)
-    merges: list[tuple[int, int, int]] = []
-    for i in range(num_train):
-        pair = get_most_frequent_pair(pair_freqs)
-        new_id = add_pair_to_vocab(vocab, pair)
-        word_counter, pair_freqs = merge_pair_ids(word_counter, pair, new_id)
-        merges.append((pair, new_id))
-        print(f"the {i+1} epoch is {pair[0]} + {pair[1]} -> {new_id}")
-    return (vocab, word_counter, merges)
+# def train_bpe(
+#     string: str = string,
+#     vocab_size: int = 263,
+#     special_tokens: list[str] = special_tokens,
+#     save_path: str | None = None,
+# ):
+#     # 初始化词汇表
+#     vocab = init_vocab(special_tokens)
+#     word_counter = pre_tokenize(string, special_tokens)
+#     pair_freqs = pair_counts(word_counter)
+#     num_train = vocab_size - len(vocab)
+#     merges: list[tuple[int, int, int]] = []
+#     for i in range(num_train):
+#         pair = get_most_frequent_pair(pair_freqs)
+#         new_id = add_pair_to_vocab(vocab, pair)
+#         word_counter, pair_freqs = merge_pair_ids(word_counter, pair, new_id)
+#         merges.append((pair, new_id))
+#         print(f"the {i+1} epoch is {pair[0]} + {pair[1]} -> {new_id}")
+#     return (vocab, word_counter, merges)
 
 
-vocab, word_counter, merges = train_bpe(
-    string=string,
-    vocab_size=256 + 1 + 6,
-    special_tokens=special_tokens,
-)
+# vocab, word_counter, merges = train_bpe(
+#     string=string,
+#     vocab_size=256 + 1 + 6,
+#     special_tokens=special_tokens,
+# )
 
-print(vocab, word_counter, merges)
+# print(vocab, word_counter, merges)
