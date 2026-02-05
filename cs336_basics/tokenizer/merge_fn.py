@@ -92,7 +92,7 @@ def merge_pairs_with_heap_index(
                 del updated_pair_counter[pair]
             changed_pairs.add(pair)
 
-        new_word = get_new_word(word, target_pair)
+        new_word = get_new_word(word, target_pair, new_id)
         new_word_counter[new_word] += freq
 
         if len(new_word) >= 2:
@@ -107,3 +107,5 @@ def merge_pairs_with_heap_index(
             heapq.heappush(
                 pair_heap, HeapItem(-freq, (vocab[pair[0]], vocab[pair[1]]), pair)
             )
+
+    return dict(new_word_counter), updated_pair_counter, pair_heap, pair_to_words

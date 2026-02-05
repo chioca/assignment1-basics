@@ -4,7 +4,12 @@ from multiprocessing import Process, Queue, Manager
 import regex as re
 import os
 from cs336_basics.tokenizer.utils import print_color, find_chunk_boundaries, timeit
-from cs336_basics.tokenizer.merge_fn import build_pair_heap, pop_most_frequent_pair
+from cs336_basics.tokenizer.merge_fn import (
+    build_pair_heap,
+    pop_most_frequent_pair,
+    merge_pairs_with_heap_index,
+)
+from tqdm import trange
 
 PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
 """
@@ -141,6 +146,12 @@ def merge_pair_ids(
     return new_word_counter, new_pair_counter
 
 
+def update_vocab(vocab: dict[int, bytes], pair: tuple[int, int]) -> int:
+    new_id = len(vocab)
+    vocab[new_id] = vocab[pair[0]] + vocab[pair[1]]
+    return new_id
+
+
 def pre_tokenize_string_worker(*args):
     input_path, special_tokens, queue, start, end, include_special = args
     with open(input_path, "rb") as f:
@@ -200,23 +211,45 @@ def train_bpe(
     for p in processes:
         p.join()
 
-    pair_counter = Counter()
-    pair_to_words: dict[tuple[int, int], set[tuple[int]]] = defaultdict(set)
+    pairs_counter = Counter()
+    pair_to_words: dict[tuple[int, int], set[tuple[int, ...]]] = defaultdict(set)
     for word in word_counter:
-        for pair in zip(word, word[1:]):
+        for i in range(len(word) - 1):
+            pair = (word[i], word[i + 1])
             pair_to_words[pair].add(word)
-            pair_counter[pair] += word_counter[word]
+            pairs_counter[pair] += word_counter[word]
 
-    vocab = init_vocab(special_tokens)
-    pair_freqs = pair_counts(word_counter)
-    pair_heap = build_pair_heap(pair_freqs, vocab)
-    merges: list[tuple[bytes, bytes]] = []
-    for _ in range(num_merges):
-        pair = pop_most_frequent_pair(pair_heap, pair_freqs)
-        new_id = add_pair_to_vocab(vocab, pair)
-        word_counter, pair_freqs = merge_pair_ids(word_counter, pair, new_id)
-        merges.append((vocab[pair[0]], vocab[pair[1]]))
-    return (vocab, merges)
+    pair_heap = build_pair_heap(pairs_counter, vocab)
+    for i in trange(num_merges):
+        most_frequent_pair = pop_most_frequent_pair(pair_heap, pairs_counter)
+        new_id = update_vocab(vocab, most_frequent_pair)
+
+        word_counter, pairs_counter, pair_heap, pair_to_words = (
+            merge_pairs_with_heap_index(
+                word_counter,
+                pairs_counter,
+                most_frequent_pair,
+                new_id,
+                vocab,
+                pair_heap,
+                pair_to_words,
+            )
+        )
+
+        merges.append((vocab[most_frequent_pair[0]], vocab[most_frequent_pair[1]]))
+
+    # if kwargs.get("save_path"):
+    #     save_vocab_and_merges(vocab, merges, kwargs["save_path"])
+    #     with open(
+    #         os.path.join(kwargs["save_path"], "special_tokens.txt"),
+    #         "w",
+    #         encoding="utf-8",
+    #     ) as f:
+    #         if special_tokens:
+    #             for token in special_tokens:
+    #                 f.write(f"{token}\n")
+
+    return vocab, merges
 
 
 string = """ 
