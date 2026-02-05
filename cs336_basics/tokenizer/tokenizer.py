@@ -1,6 +1,5 @@
 from collections import Counter, defaultdict
-import queue
-from multiprocessing import Process, Queue, Manager
+from multiprocessing import Process, Queue
 import regex as re
 import os
 from cs336_basics.tokenizer.utils import print_color, find_chunk_boundaries, timeit
@@ -190,8 +189,7 @@ def train_bpe(
         )
 
     # 1.2 Count word frequencies across chunks using multiprocessing
-    manager = Manager()
-    queue = manager.Queue()
+    queue = Queue()
     processes: list[Process] = []
     for start, end in zip(chunk_boundaries[:-1], chunk_boundaries[1:]):
         p = Process(
@@ -204,7 +202,7 @@ def train_bpe(
     word_counter = Counter()
     for _ in range(len(processes)):
         try:
-            partial_counter = queue.get(timeout=10)
+            partial_counter = queue.get()
             word_counter.update(partial_counter)
         except:
             continue

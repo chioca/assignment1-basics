@@ -51,8 +51,8 @@ def get_new_word(
             new_word.append(new_id)
             i += 2
         else:
-
             new_word.append(word[i])
+            i += 1
     return tuple(new_word)
 
 
@@ -88,12 +88,18 @@ def merge_pairs_with_heap_index(
         for i in range(len(word) - 1):
             pair = (word[i], word[i + 1])
             updated_pair_counter[pair] -= freq
-            if updated_pair_counter[pair] <= 0:
-                del updated_pair_counter[pair]
             changed_pairs.add(pair)
+
+            s = pair_to_words.get(pair)
+            if s is not None:
+                s.discard(word)
+                if not s:
+                    del pair_to_words[pair]
 
         new_word = get_new_word(word, target_pair, new_id)
         new_word_counter[new_word] += freq
+        for pair in zip(new_word, new_word[1:]):
+            pair_to_words[pair].add(new_word)
 
         if len(new_word) >= 2:
             for i in range(len(new_word) - 1):
@@ -104,8 +110,9 @@ def merge_pairs_with_heap_index(
     if pair_heap is not None:
         for pair in changed_pairs:
             freq = updated_pair_counter.get(pair, 0)
-            heapq.heappush(
-                pair_heap, HeapItem(-freq, (vocab[pair[0]], vocab[pair[1]]), pair)
-            )
+            if freq > 0:
+                heapq.heappush(
+                    pair_heap, HeapItem(-freq, (vocab[pair[0]], vocab[pair[1]]), pair)
+                )
 
     return dict(new_word_counter), updated_pair_counter, pair_heap, pair_to_words
