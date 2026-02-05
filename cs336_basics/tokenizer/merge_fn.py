@@ -98,14 +98,13 @@ def merge_pairs_with_heap_index(
 
         new_word = get_new_word(word, target_pair, new_id)
         new_word_counter[new_word] += freq
-        for pair in zip(new_word, new_word[1:]):
-            pair_to_words[pair].add(new_word)
 
         if len(new_word) >= 2:
             for i in range(len(new_word) - 1):
                 pair = (new_word[i], new_word[i + 1])
                 updated_pair_counter[pair] += freq
                 changed_pairs.add(pair)
+                pair_to_words.setdefault(pair, set()).add(new_word)
 
     if pair_heap is not None:
         for pair in changed_pairs:

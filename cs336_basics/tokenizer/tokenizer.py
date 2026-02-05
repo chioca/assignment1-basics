@@ -155,7 +155,9 @@ def pre_tokenize_string_worker(*args):
     input_path, special_tokens, queue, start, end, include_special = args
     with open(input_path, "rb") as f:
         f.seek(start)
-        chunk = f.read(end - start).decode(encoding="utf-8", errors="ignore")
+        # chunk = f.read(end - start).decode(encoding="utf-8", errors="ignore")
+        raw = f.read(end - start)
+    chunk = raw.decode("utf-8")
     word_counter = pre_tokenize(chunk, special_tokens, include_special)
     queue.put(word_counter)
 
