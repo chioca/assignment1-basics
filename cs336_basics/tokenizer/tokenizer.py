@@ -59,7 +59,7 @@ def init_vocab(special_tokens: list[str] | None = None) -> dict[int, bytes]:
 def split_by_special_tokens(
     text: str, special_tokens: list[str], including_special: bool = False
 ) -> list[str]:
-    if special_tokens is None:
+    if not special_tokens:
         return [text]
 
     special_tokens_sorted = sorted(special_tokens, key=len, reverse=True)
@@ -84,7 +84,7 @@ def pre_tokenize(
 
     for chunk in chunks:
         # special token：作为原子处理
-        if chunk in special_tokens:
+        if special_tokens and chunk in special_tokens:
             if including_special:
                 word_counts[tuple(chunk.encode("utf-8"))] += 1
             continue
@@ -155,7 +155,6 @@ def pre_tokenize_string_worker(*args):
     input_path, special_tokens, queue, start, end, include_special = args
     with open(input_path, "rb") as f:
         f.seek(start)
-        # chunk = f.read(end - start).decode(encoding="utf-8", errors="ignore")
         raw = f.read(end - start)
     chunk = raw.decode("utf-8")
     word_counter = pre_tokenize(chunk, special_tokens, include_special)
@@ -170,9 +169,7 @@ def train_bpe(
     verbose: bool = False,
     **kwargs,
 ):
-
-    with open(input_path, "rb") as f:
-        num_merges = vocab_size - 256 - (len(special_tokens) if special_tokens else 0)
+    num_merges = vocab_size - 256 - (len(special_tokens) if special_tokens else 0)
     vocab: dict[int, bytes] = init_vocab(special_tokens)
     merges: list[tuple[bytes, bytes]] = []
 
@@ -206,7 +203,8 @@ def train_bpe(
         try:
             partial_counter = queue.get()
             word_counter.update(partial_counter)
-        except:
+        except Exception as e:
+            print_color(f"Error in pre-tokenize_string_worker: {e}", "red")
             continue
     for p in processes:
         p.join()
@@ -260,31 +258,3 @@ newest newest newest newest newest newest
 special_tokens: list[str] = ["<|endoftext|>"]
 
 
-# def train_bpe(
-#     string: str = string,
-#     vocab_size: int = 263,
-#     special_tokens: list[str] = special_tokens,
-#     save_path: str | None = None,
-# ):
-#     # 初始化词汇表
-#     vocab = init_vocab(special_tokens)
-#     word_counter = pre_tokenize(string, special_tokens)
-#     pair_freqs = pair_counts(word_counter)
-#     num_train = vocab_size - len(vocab)
-#     merges: list[tuple[int, int, int]] = []
-#     for i in range(num_train):
-#         pair = get_most_frequent_pair(pair_freqs)
-#         new_id = add_pair_to_vocab(vocab, pair)
-#         word_counter, pair_freqs = merge_pair_ids(word_counter, pair, new_id)
-#         merges.append((pair, new_id))
-#         print(f"the {i+1} epoch is {pair[0]} + {pair[1]} -> {new_id}")
-#     return (vocab, word_counter, merges)
-
-
-# vocab, word_counter, merges = train_bpe(
-#     string=string,
-#     vocab_size=256 + 1 + 6,
-#     special_tokens=special_tokens,
-# )
-
-# print(vocab, word_counter, merges)

@@ -1,4 +1,4 @@
-from collections import Counter
+from collections import Counter, defaultdict
 import heapq
 
 
@@ -70,7 +70,7 @@ def merge_pairs_with_heap_index(
     list,
     dict[tuple[int, int], set[tuple[int, ...]]],
 ]:
-    new_word_counter: Counter = Counter(word_counter)
+    new_word_counter: dict[tuple[int, ...], int] = defaultdict(int)
     updated_pair_counter: Counter = pair_counter.copy()
     changed_pairs: set[tuple[int, int]] = set()
 
