@@ -70,7 +70,7 @@ def merge_pairs_with_heap_index(
     list,
     dict[tuple[int, int], set[tuple[int, ...]]],
 ]:
-    new_word_counter: dict[tuple[int, ...], int] = defaultdict(int)
+    new_word_counter: dict[tuple[int, ...], int] = dict(word_counter)
     updated_pair_counter: Counter = pair_counter.copy()
     changed_pairs: set[tuple[int, int]] = set()
 
@@ -80,10 +80,8 @@ def merge_pairs_with_heap_index(
         freq = word_counter.get(word, 0)
         if freq <= 0 or len(word) < 2:
             continue
-
-        new_word_counter[word] -= freq
-        if new_word_counter[word] <= 0:
-            del new_word_counter[word]
+        # 移除受影响的word频率
+        del new_word_counter[word]
 
         for i in range(len(word) - 1):
             pair = (word[i], word[i + 1])
@@ -97,8 +95,7 @@ def merge_pairs_with_heap_index(
                     del pair_to_words[pair]
 
         new_word = get_new_word(word, target_pair, new_id)
-        new_word_counter[new_word] += freq
-
+        new_word_counter[new_word] = new_word_counter.get(new_word, 0) + freq
         if len(new_word) >= 2:
             for i in range(len(new_word) - 1):
                 pair = (new_word[i], new_word[i + 1])
