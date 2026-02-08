@@ -2,13 +2,22 @@ from collections import Counter, defaultdict
 from multiprocessing import Process, Queue
 import regex as re
 import os
-from cs336_basics.tokenizer.utils import print_color, find_chunk_boundaries, timeit
+import numpy as np
+import json
+from cs336_basics.tokenizer.utils import (
+    print_color,
+    find_chunk_boundaries,
+    timeit,
+    save_vocab_and_merges,
+)
 from cs336_basics.tokenizer.merge_fn import (
+    heapq,
     build_pair_heap,
     pop_most_frequent_pair,
     merge_pairs_with_heap_index,
 )
-from tqdm import trange
+from tqdm import trange, tqdm
+from typing import Iterable, Iterator
 
 PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
 """
@@ -168,7 +177,7 @@ def train_bpe(
     special_tokens: list[str] | None = None,
     verbose: bool = False,
     **kwargs,
-):
+) -> tuple[dict[int, bytes], list[tuple[bytes, bytes]]]:
     num_merges = vocab_size - 256 - (len(special_tokens) if special_tokens else 0)
     vocab: dict[int, bytes] = init_vocab(special_tokens)
     merges: list[tuple[bytes, bytes]] = []
@@ -236,18 +245,18 @@ def train_bpe(
 
         merges.append((vocab[most_frequent_pair[0]], vocab[most_frequent_pair[1]]))
 
-    # if kwargs.get("save_path"):
-    #     save_vocab_and_merges(vocab, merges, kwargs["save_path"])
-    #     with open(
-    #         os.path.join(kwargs["save_path"], "special_tokens.txt"),
-    #         "w",
-    #         encoding="utf-8",
-    #     ) as f:
-    #         if special_tokens:
-    #             for token in special_tokens:
-    #                 f.write(f"{token}\n")
+    if kwargs.get("save_path"):
+        save_vocab_and_merges(vocab, merges, kwargs["save_path"])
+        with open(
+            os.path.join(kwargs["save_path"], "special_tokens.txt"),
+            "w",
+            encoding="utf-8",
+        ) as f:
+            if special_tokens:
+                for token in special_tokens:
+                    f.write(f"{token}\n")
 
-    return vocab, merges
+    return (vocab, merges)
 
 
 string = """ 
@@ -258,3 +267,190 @@ newest newest newest newest newest newest
 special_tokens: list[str] = ["<|endoftext|>"]
 
 
+class Tokenizer:
+    def __init__(
+        self,
+        vocab: dict[int, bytes],
+        merges: list[tuple[bytes, bytes]],
+        special_tokens: list[str] | None = None,
+    ) -> None:
+        self.vocab = vocab
+        self.merges = merges
+        self.special_tokens = special_tokens if special_tokens else []
+        self.vocab_inv = {v: k for k, v in vocab.items()}
+        self.special_tokens_bytes = [
+            token.encode(encoding="utf-8") for token in self.special_tokens
+        ]
+        self.special_token_set = set(self.special_tokens_bytes)
+        self.rank: dict[tuple[int, int], int] = {}
+        self.merge_to_new_id: dict[tuple[int, int], int] = {}
+
+        for i, merge in enumerate(self.merges):
+            id1, id2 = self.vocab_inv.get(merge[0]), self.vocab_inv.get(merge[1])
+            new_id = self.vocab_inv.get(merge[0] + merge[1])
+            if id1 == None or id2 == None or new_id is None:
+                continue
+            self.merge_to_new_id[(id1, id2)] = new_id
+            self.rank[(id1, id2)] = i
+
+    def _pre_tokenize(self, text: str) -> list[bytes]:
+        chunks = split_by_special_tokens(text, self.special_tokens, True)
+        token_list: list[bytes] = []
+        for chunk in chunks:
+            if chunk == "":
+                continue
+            elif chunk in self.special_tokens:
+                token_list.append(chunk.encode(encoding="utf-8"))
+            else:
+                for token in re.findall(PAT, chunk):
+                    token_list.append(token.encode(encoding="utf-8"))
+
+        return token_list
+
+    def encode(self, text: str):
+        def merge_one_pretoken(ids: list[int]) -> list[int]:
+            n = len(ids)
+            if n <= 1:
+                return ids
+
+            alive = [True] * n
+
+            # Doubly-linked list over positions 0..n-1 (positions are stable; nodes get "deleted")
+            prev = [-1] * n
+            nxt = [-1] * n
+            for i in range(n):
+                prev[i] = i - 1
+                nxt[i] = i + 1 if i + 1 < n else -1
+
+            # best pair per left-position i: (rank, i)
+            heap: list[tuple[int, int]] = []
+
+            def push_if_valid(i: int):
+                cur_r = None
+                j = nxt[i]
+                if j == -1 or not alive[i] or not alive[j]:
+                    cur_r = None
+                else:
+                    cur_r = self.rank.get((ids[i], ids[j]))
+
+                if cur_r is not None:
+                    heapq.heappush(heap, (cur_r, i))
+
+            for i in range(n):
+                push_if_valid(i)
+
+            while heap:
+                r, i = heapq.heappop(heap)
+                j = nxt[i]
+                if j == -1 or not alive[i] or not alive[j]:
+                    continue
+                # stale check: rank might no longer match current neighbor
+                pair = (ids[i], ids[j])
+                cur_r = self.rank.get(pair)
+                if cur_r is None or cur_r != r:
+                    continue
+
+                # merge i and j into i (use precomputed mapping to avoid KeyError)
+                new_id = self.merge_to_new_id.get(pair)
+                if new_id is None:
+                    continue
+                ids[i] = new_id
+
+                # delete j from the linked list
+                alive[j] = False
+                nj = nxt[j]
+                nxt[i] = nj
+                if nj != -1:
+                    prev[nj] = i
+
+                # Only pairs that can change are around i (prev[i], i) and (i, nxt[i])
+                pi = prev[i]
+                if pi != -1:
+                    push_if_valid(pi)
+                push_if_valid(i)
+
+            out: list[int] = []
+            k = 0
+            while k != -1:
+                if alive[k]:
+                    out.append(ids[k])
+                k = nxt[k]
+            return out
+
+        byte_tokens = self._pre_tokenize(text)
+
+        token_ids: list[int] = []
+        for btok in byte_tokens:
+            if btok in self.special_token_set:
+                token_ids.append(self.vocab_inv[btok])
+            else:
+                ids = [self.vocab_inv[bytes([b])] for b in btok]
+                token_ids.extend(merge_one_pretoken(ids))
+
+        return token_ids
+
+    def encode_iterable(self, iterable: Iterable[str]) -> Iterator[int]:
+        # Placeholder for iterable encoding logic
+        for text in iterable:
+            yield from self.encode(text)
+
+    def decode(self, ids: list[int]) -> str:
+        tokens = b"".join(self.vocab.get(i, b"\xef\xbf\xbd") for i in ids)
+        return tokens.decode("utf-8", errors="replace")
+
+    @classmethod
+    def from_files(
+        cls,
+        vocab_filepath: str,
+        merges_filepath: str,
+        special_tokens: list[str] | str | None = None,
+    ) -> "Tokenizer":
+        with open(vocab_filepath) as vf:
+            vocab_data = json.load(vf)
+            vocab = {int(i): bytes(v, "latin1") for v, i in vocab_data.items()}
+
+        merges = []
+        with open(merges_filepath) as mf:
+            # Skip the first line (header)
+            next(mf)
+            for line in mf:
+                if line.strip() and not line.startswith("#"):
+                    parts = line.strip().split()
+                    if len(parts) == 2:
+                        merges.append(
+                            (bytes(parts[0], "latin1"), bytes(parts[1], "latin1"))
+                        )
+
+        if isinstance(special_tokens, str):
+            with open(special_tokens, encoding="utf-8") as stf:
+                special_tokens_list = [line.strip() for line in stf if line.strip()]
+        elif isinstance(special_tokens, list):
+            special_tokens_list = special_tokens
+        else:
+            special_tokens_list = []
+
+        return cls(vocab, merges, special_tokens_list)
+
+
+def encode_file_to_bin(tokenizer, text_path, out_bin_path, dtype=np.uint16):
+    total_bytes = os.path.getsize(text_path)
+
+    with open(text_path, encoding="utf-8") as f_in, open(out_bin_path, "wb") as f_out:
+        p_bar = tqdm(
+            total=total_bytes, desc="Encoding to binary", unit="B", unit_scale=True
+        )
+
+        for line in f_in:
+            token_ids = tokenizer.encode(line)
+            arr = np.array(token_ids, dtype=dtype)
+            arr.tofile(f_out)
+
+            p_bar.update(len(line.encode("utf-8")))
+
+
+def load_tokenizer_from_dir(dir_path: str) -> Tokenizer:
+    vocab_path = os.path.join(dir_path, "vocab.json")
+    merges_path = os.path.join(dir_path, "merges.txt")
+    special_tokens_path = os.path.join(dir_path, "special_tokens.txt")
+    tokenizer = Tokenizer.from_files(vocab_path, merges_path, special_tokens_path)
+    return tokenizer

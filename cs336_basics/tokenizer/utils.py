@@ -2,10 +2,14 @@ from typing import BinaryIO
 import os
 import time
 from functools import wraps
+from rich.console import Console
+import json
+
+console = Console()
 
 
 def print_color(content: str, color: str = "green"):
-    print(f"[{color}]{content}[/{color}]")
+    console.print(f"[{color}]{content}[/{color}]")
 
 
 def find_chunk_boundaries(
@@ -68,3 +72,26 @@ def timeit(func):
         return result
 
     return wrapper
+
+
+def save_vocab_and_merges(
+    vocab: dict[int, bytes],
+    merges: list[tuple[bytes, bytes]],
+    output_dir: str | os.PathLike,
+):
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
+    vocab_filepath = os.path.join(output_dir, "vocab.json")
+    merges_filepath = os.path.join(output_dir, "merges.txt")
+
+    # Save vocab
+    vocab_inv = {v.decode("latin1"): k for k, v in vocab.items()}
+    with open(vocab_filepath, "w") as vf:
+        json.dump(vocab_inv, vf, ensure_ascii=False, indent=2)
+
+    # Save merges
+    with open(merges_filepath, "w") as mf:
+        mf.write("#version: 0.2\n")
+        for a, b in merges:
+            mf.write(f"{a.decode('latin1')} {b.decode('latin1')}\n")
