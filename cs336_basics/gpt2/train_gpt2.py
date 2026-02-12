@@ -24,7 +24,8 @@ class GptConfig:
 #         ))
 
 
-embedding = nn.Embedding(num_embeddings=10, embedding_dim=3)
-input_ = torch.tensor([1, 2, 3])
-out = embedding(input_)
-print(out)
+embedding = nn.Embedding(num_embeddings=32000, embedding_dim=768)
+
+token_ids = torch.tensor([101, 2769, 4263])
+vecs = embedding(token_ids)
+print(vecs[0].shape)
