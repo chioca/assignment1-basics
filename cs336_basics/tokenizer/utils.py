@@ -52,16 +52,16 @@ def split_by_special_tokens(
 
 
 def pre_tokenize(
-    string: str, special_tokens: list[str], including_special: bool = False
+    string: str, special_tokens: list[str] = None, including_special: bool = False
 ):
 
     chunks = split_by_special_tokens(
         string, special_tokens, include_special=including_special
     )
-
+    special_tokens = [] if special_tokens is None else special_tokens
     for chunk in chunks:
         if including_special and chunk in special_tokens:
-            yield tuple(chunk.encode("utf-8"))
+            yield (chunk,)
 
         else:
             for match in PATTERN.finditer(chunk):
