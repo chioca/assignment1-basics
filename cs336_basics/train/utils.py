@@ -3,6 +3,7 @@ from torch import nn
 from collections.abc import Callable, Iterable
 from typing import Optional
 import math
+from numpy import typing as npt
 
 
 def cross_entropy(inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
@@ -155,6 +156,54 @@ def gradient_clipping(parameters: Iterable[torch.nn.Parameter], max_l2_norm: flo
         for p in parameters:
             if p.grad is not None:
                 p.grad.data.mul_(clip_coef)
+
+
+def get_batch(
+    dataset: npt.NDArray,
+    batch_size: int,
+    context_length: int,
+    device: str | torch.device,
+    use_mmap: bool = False,
+):
+    n = dataset.shape[0]
+    data = torch.as_tensor(dataset)
+
+    starts = torch.randint(0, n - context_length, (batch_size,), dtype=torch.long)
+    offsets = torch.arange(context_length, dtype=torch.long).unsqueeze(0)
+
+    idx = starts.unsqueeze(-1) + offsets
+
+    inputs = data[idx]
+    targets = data[idx + 1]
+
+    inputs.to(device)
+    targets.to(device)
+
+    return inputs, targets
+
+
+def save_checkpoint(
+    model: torch.nn.Module,
+    optimizer: torch.optim.Optimizer,
+    iteration: int,
+    out: str,
+):
+    state = {
+        "model_state_dict": model.state_dict(),
+        "optimizer_state_dict": optimizer.state_dict(),
+        "iteration": iteration,
+    }
+
+    torch.save(state, out)
+
+
+def load_checkpoint(src: str, model: torch.nn.Module, optimizer: torch.optim.Optimizer):
+    state = torch.load(
+        src,
+    )
+    model.load_state_dict(state["model_state_dict"])
+    optimizer.load_state_dict(state["optimizer_state_dict"])
+    return state["iteration"]
 
 
 if __name__ == "__main__":
