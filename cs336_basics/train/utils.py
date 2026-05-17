@@ -119,6 +119,44 @@ class AdamW(torch.optim.Optimizer):
         return loss
 
 
+def get_lr_cosine_schedule(
+    t,
+    a_max,
+    a_min,
+    t_w,
+    t_c,
+):
+    a_t = 0.0
+    if t < t_w:
+        a_t = t / t_w * a_max
+    elif t_w <= t <= t_c:
+        a_t = a_min + 0.5 * (1 + math.cos((t - t_w) / (t_c - t_w) * math.pi)) * (
+            a_max - a_min
+        )
+    elif t > t_c:
+        a_t = a_min
+
+    return a_t
+
+
+@torch.no_grad()
+def gradient_clipping(parameters: Iterable[torch.nn.Parameter], max_l2_norm: float):
+    eps = 1e-6
+    total_norm = 0.0
+    for p in parameters:
+        if p.grad is not None:
+            param_norm = p.grad.data.norm(2)
+            total_norm += param_norm.item() ** 2
+
+    total_norm = total_norm**0.5
+
+    clip_coef = max_l2_norm / (eps + total_norm)
+    if clip_coef < 1.0:
+        for p in parameters:
+            if p.grad is not None:
+                p.grad.data.mul_(clip_coef)
+
+
 if __name__ == "__main__":
     weights = nn.Parameter(5 * torch.randn(10, 10))
     opt = SGD([weights], lr=1)
