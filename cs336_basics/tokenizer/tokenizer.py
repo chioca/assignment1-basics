@@ -48,16 +48,21 @@ class Tokenizer:
                 if best_pair is None:
                     break
 
-                new_ids = []
-                i = 0
-                while i < len(ids):
-                    if i < len(ids) - 1 and (ids[i], ids[i + 1]) == best_pair:
-                        new_ids.append(self.merges[best_pair])
-                        i += 2
+                write_id, read_id = 0, 0
+                while read_id < len(ids):
+                    if (
+                        read_id < len(ids) - 1
+                        and (ids[read_id], ids[read_id + 1]) == best_pair
+                    ):
+                        ids[write_id] = self.merges[best_pair]
+                        write_id += 1
+                        read_id += 2
                     else:
-                        new_ids.append(ids[i])
-                        i += 1
-                ids = new_ids
+                        ids[write_id] = ids[read_id]
+                        write_id += 1
+                        read_id += 1
+
+                del ids[write_id:]
 
             res += ids
 
