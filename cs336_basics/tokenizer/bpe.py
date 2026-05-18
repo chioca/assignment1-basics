@@ -33,7 +33,6 @@ def save_to_file(
         f.writelines(merges)
 
 
-@time_it
 def train_bpe(
     input_path: str,
     vocab_size: int,

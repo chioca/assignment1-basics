@@ -11,7 +11,6 @@ def cross_entropy(inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
 
     # 1. 寻找每行的最大值（用于数值稳定）
     x_max = torch.max(inputs, dim=-1, keepdim=True).values
-    print("x_max", x_max)
     # 2. 计算分母的 Log-Sum-Exp 部分
     # inputs - x_max 顺便做了广播机制（Broadcast）
 

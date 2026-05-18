@@ -2,7 +2,8 @@ import regex as re
 from pathlib import Path
 from collections import Counter, defaultdict
 from cs336_basics.pretokenization_example import find_chunk_boundaries
-from multiprocessing import Pool, Process, Manager
+from multiprocessing import Pool
+import multiprocessing as mp
 from tqdm import tqdm
 from queue import Empty
 import os
@@ -126,18 +127,14 @@ def get_counter(*args):
     chunks = list(zip(boundaries[:-1], boundaries[1:]))
 
     final_counter = Counter()
-
-    with Pool(
+    ctx = mp.get_context("forkserver")
+    with ctx.Pool(
         processes=num_workers,
         initializer=init_worker,
         initargs=(input_path, special_tokens),
     ) as pool:
 
-        for counter in tqdm(
-            pool.imap_unordered(process_chunk, chunks),
-            total=len(chunks),
-            desc="pre tokenize",
-        ):
+        for counter in pool.imap_unordered(process_chunk, chunks):
             final_counter.update(counter)
 
     return final_counter
@@ -150,12 +147,6 @@ def stream_pretokenize(
     num_workers: int = None,
     work=None,
 ) -> Counter:
-    """
-    单进程流式读取
-
-    chunk_size:
-        每次读取字节数
-    """
 
     if num_workers is None:
         num_workers = cpu_count()
