@@ -2,6 +2,8 @@ from torch import nn
 from cs336_basics.transformer.block import Block
 from cs336_basics.transformer.utils import Emebedding, RMSNorm, Linear
 import torch
+from dataclasses import dataclass
+from cs336_basics.train.config import ModelConfig
 
 
 class transformer_llm(nn.Module):
@@ -73,3 +75,15 @@ class transformer_llm(nn.Module):
             self.rms_norm.weights.copy_(weights["ln_final.weight"])
             self.out_proj.weight.copy_(weights["lm_head.weight"])
         return self
+
+
+def Transform_llm(config: ModelConfig):
+    return transformer_llm(
+        vocab_size=config.vocab_size,
+        num_layers=config.num_layers,
+        d_model=config.d_model,
+        num_heads=config.num_heads,
+        d_ff=config.d_ff,
+        theta=config.theta,
+        max_seq_len=config.max_seq_len,
+    )

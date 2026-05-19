@@ -4,6 +4,9 @@ from collections.abc import Callable, Iterable
 from typing import Optional
 import math
 from numpy import typing as npt
+from cs336_basics.tokenizer.tokenizer import Tokenizer
+from contextlib import nullcontext
+from dataclasses import dataclass
 
 
 def cross_entropy(inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
@@ -162,7 +165,6 @@ def get_batch(
     batch_size: int,
     context_length: int,
     device: str | torch.device,
-    use_mmap: bool = False,
 ):
     n = dataset.shape[0]
     data = torch.as_tensor(dataset)
@@ -175,8 +177,8 @@ def get_batch(
     inputs = data[idx]
     targets = data[idx + 1]
 
-    inputs.to(device)
-    targets.to(device)
+    inputs = inputs.to(device)
+    targets = targets.to(device)
 
     return inputs, targets
 
@@ -203,6 +205,83 @@ def load_checkpoint(src: str, model: torch.nn.Module, optimizer: torch.optim.Opt
     model.load_state_dict(state["model_state_dict"])
     optimizer.load_state_dict(state["optimizer_state_dict"])
     return state["iteration"]
+
+
+def get_device() -> torch.device:
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    elif torch.backends.mps.is_available():
+        return torch.device("mps")
+    else:
+        return torch.device("cpu")
+
+
+def get_ctx(use_mixed: bool, device: torch.device, verbose: bool = True):
+    if use_mixed and device.type == "cuda":
+
+        return torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+    else:
+        return nullcontext()
+
+
+@dataclass
+class BatchState:
+    pos: int = 0
+
+
+def get_batch_sequential(
+    data: npt.NDArray | torch.Tensor,
+    batch_size: int,
+    context_length: int,
+    device: str | torch.device,
+    state: BatchState,
+    *,
+    stride: int | None = None,
+):
+    if stride is None:
+        stride = context_length
+
+    n = data.numel()
+    max_start = n - context_length - 1
+    last_start = state.pos + (batch_size - 1) * stride
+    end = last_start + context_length + 1
+
+    if end > n:
+        state.pos = 0
+        last_start = (batch_size - 1) * stride
+        end = last_start + context_length + 1
+
+    base = data[state.pos : end]
+
+    inputs = base.as_strided(size=(batch_size, context_length), stride=(stride, 1))
+    targets = base[1:].as_strided(size=(batch_size, context_length), stride=(stride, 1))
+
+    state.pos += stride * batch_size
+
+    if (isinstance(device, torch.device) and device.type == "cuda") or (
+        isinstance(device, str) and "cuda" in device.lower()
+    ):
+        inputs = inputs.to(device, non_blocking=True).long()
+        targets = targets.to(device, non_blocking=True).long()
+    else:
+        inputs = inputs.long().to(device)
+        targets = targets.long().to(device)
+
+    return inputs, targets
+
+
+def data_loading_sequential(
+    data: npt.NDArray | torch.Tensor,
+    batch_size: int,
+    context_length: int,
+    device: str | torch.device,
+    state: BatchState,
+    *,
+    stride: int | None = None,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    return get_batch_sequential(
+        data, batch_size, context_length, device, state, stride=stride
+    )
 
 
 if __name__ == "__main__":
