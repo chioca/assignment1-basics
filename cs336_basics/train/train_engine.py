@@ -24,6 +24,7 @@ def train(
 ):
 
     # Load training dataset
+    print_color(train_config.train_data_path, "red")
     original_data = np.memmap(
         train_config.train_data_path,
         dtype=np.uint16,
@@ -40,9 +41,9 @@ def train(
         log_dict = {}
 
         inputs, targets = data_loading_sequential(
-            x=x,
+            data=x,
             batch_size=train_config.batch_size,
-            context_length=model.config.max_seq_len,
+            context_length=model.max_seq_len,
             device=train_config.device,
             state=state,
         )

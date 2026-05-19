@@ -137,6 +137,6 @@ def train_bpe(
 if __name__ == "__main__":
     input_path = "/home/chioca/assignment1-basics/data/owt_train.txt"
     vocab, merges = train_bpe(
-        input_path, 50_256, ["<|endofeof|>"], is_for_test=False, is_save=True
+        input_path, 10_000, ["<|endofeof|>"], is_for_test=False, is_save=True
     )
     print(merges)

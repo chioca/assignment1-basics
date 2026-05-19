@@ -38,6 +38,7 @@ class transformer_llm(nn.Module):
                 for _ in range(num_layers)
             ]
         )
+        self.max_seq_len = max_seq_len
         self.rms_norm = RMSNorm(d_model=d_model, device=device, dtype=dtype)
         self.out_proj = Linear(d_model, vocab_size, device=device, dtype=dtype)
 

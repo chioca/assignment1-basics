@@ -11,13 +11,10 @@ def main(
     train_config_json: str | None = None,
     model_config_json: str | None = None,
 ):
-
+    print(train_config_json, model_config_json)
     # Load configs
-    train_config = (
-        TrainingConfig.from_json(train_config_json)
-        if train_config_json
-        else TrainingConfig()
-    )
+    train_config = TrainingConfig.from_json(train_config_json)
+    print(train_config.eval_data_path)
     model_config = (
         ModelConfig.from_json(model_config_json) if model_config_json else ModelConfig()
     )
@@ -76,4 +73,4 @@ def main(
 
 
 if __name__ == "__main__":
-    fire.Fire(main())
+    fire.Fire(main)

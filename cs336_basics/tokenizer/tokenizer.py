@@ -1,6 +1,5 @@
 from cs336_basics.tokenizer.utils import (
     pre_tokenize,
-    bytes_to_unicode,
     gpt2_bytes_to_unicode,
 )
 from cs336_basics.tokenizer.bpe import train_bpe
@@ -196,7 +195,7 @@ if __name__ == "__main__":
         vocab_path, merges_path, ["<|endoftext|>"]
     )
     encode_file_to_bin(
-        tokenizer, "/home/chioca/assignment1-basics/data/TinyStoriesV2-GPT4-train.txt", "gpt_out.bin"
+        tokenizer, "/home/chioca/assignment1-basics/data/TinyStoriesV2-GPT4-valid.txt", "gpt_out_eval.bin"
     )
     ids = tokenizer.encode("I like to sing songs")
     print(tokenizer.decode(ids))

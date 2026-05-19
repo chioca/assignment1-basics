@@ -9,7 +9,7 @@ from cs336_basics.train.utils import get_device
 
 @dataclass
 class ModelConfig:
-    vocab_size: int = 10000
+    vocab_size: int = 50256
     max_seq_len: int = 256
 
     d_model: int = 512
@@ -101,7 +101,6 @@ class TrainingConfig:
             self.num_steps = 100
             self.batch_size = 8
             self.log_moe_every = 10
-            self.train_data_path = "datasets/tiny_stories/eval.bin"
 
     @classmethod
     def from_json(cls, path: str | Path) -> "TrainingConfig":
@@ -124,7 +123,6 @@ class TrainingConfig:
                     f"betas must be a tuple of length 2, got: {data['betas']}"
                 )
             data["betas"] = (float(b[0]), float(b[1]))
-
         return cls(**data)
 
     def to_dict(self) -> dict[str, Any]:
