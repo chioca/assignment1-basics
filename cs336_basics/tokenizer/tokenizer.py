@@ -1,5 +1,13 @@
-from cs336_basics.tokenizer.utils import pre_tokenize
+from cs336_basics.tokenizer.utils import (
+    pre_tokenize,
+    bytes_to_unicode,
+    gpt2_bytes_to_unicode,
+)
+from cs336_basics.tokenizer.bpe import train_bpe
 import json
+from tqdm import tqdm
+import os
+import numpy as np
 
 
 class Tokenizer:
@@ -26,8 +34,13 @@ class Tokenizer:
 
     def encode(self, text: str) -> list[int]:
         res = []
+
         for tokens in pre_tokenize(text, self.special_tokens, True):
-            if len(tokens) == 1 and tokens[0] in self.special_tokens:
+            if (
+                len(tokens) == 1
+                and isinstance(tokens[0], str)
+                and tokens[0] in self.special_tokens
+            ):
                 res.append(self.re_vocab[tokens[0].encode("utf-8")])
                 continue
 
@@ -79,6 +92,47 @@ class Tokenizer:
             yield from ids
 
     @classmethod
+    def get_tokenizer_from_vocab_merges_path(
+        cls,
+        vocab_path: str | os.PathLike,
+        merges_path: str | os.PathLike,
+        special_tokens: list[str] | None = None,
+    ):
+        gpt2_byte_decoder = {v: k for k, v in gpt2_bytes_to_unicode().items()}
+        with open(vocab_path) as vocab_f:
+            gpt2_vocab = json.load(vocab_f)
+        gpt2_bpe_merges = []
+        with open(merges_path) as f:
+            for line in f:
+                cleaned_line = line.rstrip()
+                if cleaned_line and len(cleaned_line.split(" ")) == 2:
+                    gpt2_bpe_merges.append(tuple(cleaned_line.split(" ")))
+        # The GPT-2 tokenizer uses a remapped unicode encoding for bytes. Let's
+        # just return the original bytes, so we don't force students to use
+        # any particular encoding scheme.
+        vocab = {
+            gpt2_vocab_index: bytes(
+                [gpt2_byte_decoder[token] for token in gpt2_vocab_item]
+            )
+            for gpt2_vocab_item, gpt2_vocab_index in gpt2_vocab.items()
+        }
+        # If any of the special tokens don't exist in the vocab, append them to the vocab.
+        if special_tokens:
+            for special_token in special_tokens:
+                byte_encoded_special_token = special_token.encode("utf-8")
+                if byte_encoded_special_token not in set(vocab.values()):
+                    vocab[len(vocab)] = byte_encoded_special_token
+
+        merges = [
+            (
+                bytes([gpt2_byte_decoder[token] for token in merge_token_1]),
+                bytes([gpt2_byte_decoder[token] for token in merge_token_2]),
+            )
+            for merge_token_1, merge_token_2 in gpt2_bpe_merges
+        ]
+        return cls(vocab, merges, special_tokens)
+
+    @classmethod
     def from_files(
         cls,
         vocab_filepath: str,
@@ -97,26 +151,52 @@ class Tokenizer:
         ) as f:
             vocab = json.load(f)
 
-        vocab = {
-            int(k): v.encode("utf-8", errors="surrogateescape")
+        my_vocab = {
+            int(v): k.encode("utf-8", errors="surrogateescape")
             for k, v in vocab.items()
         }
 
         with open(merges_filepath, "r") as f:
             lines = f.readlines()
             for line in lines:
-                a, b, c = map(int, line.split())
-                merges.append(((a, b), c))
+                a, b = map(str, line.split())
+                merges.append(((vocab[a], vocab[b]), vocab[a + b]))
 
-        return cls(vocab, merges, special_tokens)
+        return cls(my_vocab, merges, special_tokens)
+
+
+def encode_file_to_bin(tokenizer, text_path, out_bin_path, dtype=np.uint16):
+    total_bytes = os.path.getsize(text_path)
+
+    with open(text_path, encoding="utf-8") as f_in, open(out_bin_path, "wb") as f_out:
+        p_bar = tqdm(
+            total=total_bytes, desc="Encoding to binary", unit="B", unit_scale=True
+        )
+
+        for line in f_in:
+            token_ids = tokenizer.encode(line)
+            arr = np.array(token_ids, dtype=dtype)
+            arr.tofile(f_out)
+
+            p_bar.update(len(line.encode("utf-8")))
+
+
+def load_tokenizer_from_dir(dir_path: str) -> Tokenizer:
+    vocab_path = os.path.join(dir_path, "vocab.json")
+    merges_path = os.path.join(dir_path, "merges.txt")
+    special_tokens_path = os.path.join(dir_path, "special_tokens.txt")
+    tokenizer = Tokenizer.from_files(vocab_path, merges_path, special_tokens_path)
+    return tokenizer
 
 
 if __name__ == "__main__":
-    merges_path = "/home/chioca/assignment1-basics/merges.txt"
-    vocab_path = "/home/chioca/assignment1-basics/vocab.json"
-    tokenizer = Tokenizer.from_files(
-        vocab_path,
-        merges_path,
+    merges_path = "/home/chioca/assignment1-basics/tests/fixtures/gpt2_merges.txt"
+    vocab_path = "/home/chioca/assignment1-basics/tests/fixtures/gpt2_vocab.json"
+    tokenizer = Tokenizer.get_tokenizer_from_vocab_merges_path(
+        vocab_path, merges_path, ["<|endoftext|>"]
+    )
+    encode_file_to_bin(
+        tokenizer, "/home/chioca/assignment1-basics/data/TinyStoriesV2-GPT4-train.txt", "gpt_out.bin"
     )
     ids = tokenizer.encode("I like to sing songs")
     print(tokenizer.decode(ids))

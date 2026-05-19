@@ -4,8 +4,6 @@ from collections import Counter, defaultdict
 from cs336_basics.pretokenization_example import find_chunk_boundaries
 from multiprocessing import Pool
 import multiprocessing as mp
-from tqdm import tqdm
-from queue import Empty
 import os
 from os import cpu_count
 import mmap
@@ -204,3 +202,26 @@ def time_it(func):
         return result
 
     return wrapper
+
+
+def gpt2_bytes_to_unicode() -> dict[int, str]:
+    bs = (
+        list(range(ord("!"), ord("~") + 1))
+        + list(range(ord("¡"), ord("¬") + 1))
+        + list(range(ord("®"), ord("ÿ") + 1))
+    )
+    cs = bs[:]
+    # now get the representations of the other 68 integers that do need shifting
+    # each will get mapped chr(256 + n), where n will grow from 0...67 in the loop
+    # Get printable representations of the remaining integers 68 integers.
+    n = 0
+    for b in range(2**8):
+        if b not in bs:
+            # If this integer isn't in our list of visually-representable
+            # charcters, then map it to the next nice character (offset by 256)
+            bs.append(b)
+            cs.append(2**8 + n)
+            n += 1
+    characters = [chr(n) for n in cs]
+    d = dict(zip(bs, characters))
+    return d
