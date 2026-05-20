@@ -7,6 +7,7 @@ from cs336_basics.train.config import ModelConfig
 
 
 class transformer_llm(nn.Module):
+
     def __init__(
         self,
         vocab_size: int,

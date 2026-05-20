@@ -67,22 +67,6 @@ class Emebedding(nn.Module):
         nn.init.trunc_normal_(self.weights, mean=mean, std=std, a=-3 * std, b=3 * std)
 
     def forward(self, x: torch.Tensor):
-        print(
-            "config:",
-            self.num_embeddings,
-            self.embedding_dim,
-        )
-        print(x.shape)
-        try:
-            o = self.weights
-        except Exception as e:
-            print(
-                "config:",
-                self.num_embeddings,
-                self.embedding_dim,
-            )
-            print(x.shape)
-            raise ValueError("1!!!")
         return self.weights[x]
 
 

@@ -24,7 +24,6 @@ def train(
 ):
 
     # Load training dataset
-    print_color(train_config.train_data_path, "red")
     original_data = np.memmap(
         train_config.train_data_path,
         dtype=np.uint16,
@@ -50,20 +49,20 @@ def train(
 
         # Forward pass
         with ctx:
-            logits, aux = model(inputs)
+            logits = model(inputs)
 
             logits = logits.view(-1, logits.size(-1))
             targets = targets.view(-1)
             loss = cross_entropy(logits, targets)
 
-            if model.config.use_moe:
-                # Scale z-loss
-                z_loss_scaled = aux["z_loss_scaled"]
-                moe_layers = aux["moe_layers"]
-                loss = loss + (z_loss_scaled / moe_layers)
+            # if model.config.use_moe:
+            #     # Scale z-loss
+            #     z_loss_scaled = aux["z_loss_scaled"]
+            #     moe_layers = aux["moe_layers"]
+            #     loss = loss + (z_loss_scaled / moe_layers)
 
-                lb_loss = aux["lb_loss_scaled"]
-                loss = loss + (lb_loss / moe_layers)
+            #     lb_loss = aux["lb_loss_scaled"]
+            #     loss = loss + (lb_loss / moe_layers)
 
         # Backward pass and optimization step
         optimizer.zero_grad(set_to_none=True)
@@ -89,30 +88,30 @@ def train(
             log_dict["train/perplexity"] = torch.exp(loss).item()
             log_dict["train/lr"] = lr
 
-        print(
+        print_color(
             f"Step {step + 1}/{train_config.num_steps}, Loss: {loss.item():.4f}, LR: {lr:.6f}",
             "green",
         )
-        if model.config.use_moe:
-            tokens_per_expert = aux["tokens_per_expert"]
-            if model.config.use_moe and (step % train_config.log_moe_every == 0):
-                layers_to_log = sorted(
-                    set([0, model.config.num_layers // 2, model.config.num_layers - 1])
-                )
-                for layer_idx in layers_to_log:
-                    tpe = (
-                        tokens_per_expert[layer_idx].detach().float().cpu().numpy()
-                    )  # (E,)
-                    msg = " | ".join([f"E{e}:{tpe[e]:.3f}" for e in range(len(tpe))])
-                    print(
-                        f"[step {step}] Layer {layer_idx} tokens_per_expert: {msg}",
-                        "magenta",
-                    )
-                    if train_config.wandb_logging:
-                        for e in range(len(tpe)):
-                            log_dict[f"moe/layer_{layer_idx}_expert_{e}_tokens"] = tpe[
-                                e
-                            ]
+        # if model.config.use_moe:
+        #     tokens_per_expert = aux["tokens_per_expert"]
+        #     if model.config.use_moe and (step % train_config.log_moe_every == 0):
+        #         layers_to_log = sorted(
+        #             set([0, model.config.num_layers // 2, model.config.num_layers - 1])
+        #         )
+        #         for layer_idx in layers_to_log:
+        #             tpe = (
+        #                 tokens_per_expert[layer_idx].detach().float().cpu().numpy()
+        #             )  # (E,)
+        #             msg = " | ".join([f"E{e}:{tpe[e]:.3f}" for e in range(len(tpe))])
+        #             print(
+        #                 f"[step {step}] Layer {layer_idx} tokens_per_expert: {msg}",
+        #                 "magenta",
+        #             )
+        #             if train_config.wandb_logging:
+        #                 for e in range(len(tpe)):
+        #                     log_dict[f"moe/layer_{layer_idx}_expert_{e}_tokens"] = tpe[
+        #                         e
+        #                     ]
 
         # if (
         #     train_config.eval_log_interval > 0
@@ -166,5 +165,5 @@ def train(
         #     print("Once upon a time", end="")
         #     print_color(f"{generated_text}\n", "cyan")
 
-        if train_config.wandb_logging and log_dict:
-            wandb.log(log_dict, step=step + 1)
+        # if train_config.wandb_logging and log_dict:
+        #     wandb.log(log_dict, step=step + 1)

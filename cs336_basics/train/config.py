@@ -9,7 +9,7 @@ from cs336_basics.train.utils import get_device
 
 @dataclass
 class ModelConfig:
-    vocab_size: int = 50256
+    vocab_size: int = 10_000
     max_seq_len: int = 256
 
     d_model: int = 512
